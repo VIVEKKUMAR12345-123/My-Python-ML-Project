@@ -1,0 +1,1 @@
+print("Smart PC Health AI Project Started!")
