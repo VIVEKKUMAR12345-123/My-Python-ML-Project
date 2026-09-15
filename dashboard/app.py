@@ -3,6 +3,7 @@ import streamlit as st
 import psutil
 import subprocess
 import joblib
+import json
 import time
 import platform
 from datetime import datetime, timedelta
@@ -53,7 +54,9 @@ if "history" not in st.session_state:
             "RAM Usage",
             "GPU Usage",
             "GPU Temperature",
-            "Disk Usage"
+            "Disk Usage",
+            "Process Count",
+            "AI Risk Level"
         ]
     )
 
@@ -64,8 +67,8 @@ if "history" not in st.session_state:
 
 def get_gpu_data():
 
-    gpu_usage = 0.0
-    gpu_temperature = 0.0
+    gpu_usage = None
+    gpu_temperature = None
 
     try:
 
@@ -131,6 +134,116 @@ def get_cpu_temperature():
 # ============================================================
 # PC COMPONENT INFORMATION
 # ============================================================
+
+def get_graphics_cards():
+    graphics_cards = []
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | "
+                "Select-Object Name, AdapterRAM, DriverVersion, VideoProcessor | "
+                "ConvertTo-Json"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            return graphics_cards
+
+        data = json.loads(result.stdout)
+
+        if isinstance(data, dict):
+            data = [data]
+
+        for gpu in data:
+            name = gpu.get("Name", "Unknown")
+            adapter_ram = gpu.get("AdapterRAM")
+            driver = gpu.get("DriverVersion", "Unknown")
+            processor = gpu.get("VideoProcessor", "Unknown")
+
+            # Convert bytes to GB
+            if adapter_ram:
+                try:
+                    vram_gb = round(int(adapter_ram) / (1024 ** 3), 2)
+                except:
+                    vram_gb = "Unknown"
+            else:
+                vram_gb = "Unknown"
+
+            name_lower = name.lower()
+
+            # Basic classification
+            if any(x in name_lower for x in [
+                "amd radeon(tm) graphics",
+                "amd radeon graphics",
+                "intel uhd",
+                "intel iris",
+                "intel hd graphics"
+            ]):
+                gpu_type = "Integrated"
+            else:
+                gpu_type = "Dedicated"
+
+            graphics_cards.append({
+                "Name": name,
+                "Type": gpu_type,
+                "VRAM": vram_gb,
+                "Driver": driver,
+                "Processor": processor
+            })
+
+    except Exception:
+        return graphics_cards
+
+    return graphics_cards
+
+
+def get_running_processes():
+    processes = []
+
+    try:
+        for proc in psutil.process_iter(
+            ['pid', 'name', 'memory_info']
+        ):
+            try:
+                info = proc.info
+
+                memory_info = info.get("memory_info")
+
+                if memory_info:
+                    ram_mb = round(
+                        memory_info.rss / (1024 * 1024), 1
+                    )
+                else:
+                    ram_mb = 0.0
+
+                cpu_percent = proc.cpu_percent(interval=None)
+
+                processes.append({
+                    "PID": info.get("pid"),
+                    "Application": info.get("name") or "Unknown",
+                    "CPU %": round(cpu_percent, 1),
+                    "RAM (MB)": ram_mb
+                })
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+    except Exception:
+        return []
+
+    processes.sort(
+        key=lambda x: x["RAM (MB)"],
+        reverse=True
+    )
+
+    return processes
+
 
 def get_system_info():
 
@@ -927,6 +1040,25 @@ def realtime_dashboard():
     elif page == "📊 Performance":
         st.title("📊 Performance Monitoring")
 
+        # RUNNING APPLICATIONS
+
+        st.markdown("### 🖥️ Running Applications")
+
+        running_processes = get_running_processes()
+
+        if running_processes:
+
+            process_df = pd.DataFrame(running_processes)
+
+            st.dataframe(
+                process_df.head(15),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+            st.info("No running application information available.")
+
     elif page == "🤖 AI Analysis":
         st.title("🤖 AI Health Analysis")
 
@@ -1317,18 +1449,35 @@ if page == "🖥️ System Info":
         st.write(
             f"**Frequency:** {system_info['CPU Frequency']}"
         )
+        
+
+        st.markdown("### 🎮 Graphics Cards")
+
+        graphics_cards = get_graphics_cards()
+
+        if graphics_cards:
+
+            for i, gpu in enumerate(graphics_cards, start=1):
+
+                st.markdown(f"#### 🎮 Graphics Card {i}")
+
+                st.write(f"**Name:** {gpu['Name']}")
+                st.write(f"**Type:** {gpu['Type']}")
+
+                st.write(
+                    f"**VRAM:** {gpu['VRAM']} GB"
+                    if isinstance(gpu["VRAM"], (int, float))
+                    else "**VRAM:** Unknown"
+                )
+
+                st.write(f"**Driver Version:** {gpu['Driver']}")
+                st.write(f"**Video Processor:** {gpu['Processor']}")
+
+        else:
+            st.info("No graphics card information available.")
 
 
-        st.markdown("### 🎮 Graphics")
-
-        st.write(
-            f"**GPU:** {system_info['GPU']}"
-        )
-
-        st.write(
-            f"**VRAM:** {system_info['GPU VRAM']}"
-        )
-
+    with col2:
 
         st.markdown("### 💾 Memory")
 
@@ -1344,8 +1493,6 @@ if page == "🖥️ System Info":
             f"**Available RAM:** {system_info['RAM Available']}"
         )
 
-
-    with col2:
 
         st.markdown("### 💽 Storage")
 
