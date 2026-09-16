@@ -4,6 +4,7 @@ import psutil
 import subprocess
 import joblib
 import json
+import re
 import time
 import platform
 from datetime import datetime, timedelta
@@ -203,10 +204,66 @@ def get_graphics_cards():
     return graphics_cards
 
 
+def get_gpu_usage_by_process():
+    gpu_usage = {}
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-Command",
+                "Get-CimInstance "
+                "Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine | "
+                "Select-Object Name, UtilizationPercentage | "
+                "ConvertTo-Json -Compress"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            return gpu_usage
+
+        data = json.loads(result.stdout)
+
+        if isinstance(data, dict):
+            data = [data]
+
+        for item in data:
+
+            name = item.get("Name", "")
+            utilization = item.get("UtilizationPercentage", 0)
+
+            match = re.search(r"pid_(\d+)", name, re.IGNORECASE)
+
+            if match:
+                pid = int(match.group(1))
+
+                try:
+                    utilization = float(utilization)
+                except:
+                    utilization = 0.0
+
+                gpu_usage[pid] = gpu_usage.get(pid, 0.0) + utilization
+
+    except Exception:
+        return {}
+
+    for pid in gpu_usage:
+        gpu_usage[pid] = round(
+            min(gpu_usage[pid], 100.0),
+            1
+        )
+
+    return gpu_usage
+
+
 def get_running_processes():
     processes = []
 
     try:
+        gpu_usage_by_process = get_gpu_usage_by_process()
         for proc in psutil.process_iter(
             ['pid', 'name', 'memory_info']
         ):
@@ -224,11 +281,34 @@ def get_running_processes():
 
                 cpu_percent = proc.cpu_percent(interval=None)
 
+                process_name = info.get("name") or "Unknown"
+
+                system_processes = [
+                    "system",
+                    "system idle process",
+                    "registry",
+                    "smss.exe",
+                    "csrss.exe",
+                    "wininit.exe",
+                    "services.exe",
+                    "lsass.exe",
+                    "svchost.exe",
+                    "dwm.exe",
+                    "conhost.exe"
+                ]
+
+                if process_name.lower() in system_processes:
+                    continue
+
                 processes.append({
                     "PID": info.get("pid"),
                     "Application": info.get("name") or "Unknown",
                     "CPU %": round(cpu_percent, 1),
-                    "RAM (MB)": ram_mb
+                    "RAM (MB)": ram_mb,
+                    "GPU %": gpu_usage_by_process.get(
+                        info.get("pid"),
+                        0.0
+                    )
                 })
 
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -1044,7 +1124,14 @@ def realtime_dashboard():
 
         st.markdown("### 🖥️ Running Applications")
 
-        running_processes = get_running_processes()
+        if "process_data" not in st.session_state:
+            st.session_state.process_data = get_running_processes()
+
+        if st.button("🔄 Refresh Applications"):
+
+            st.session_state.process_data = get_running_processes()
+
+        running_processes = st.session_state.process_data
 
         if running_processes:
 
