@@ -300,6 +300,10 @@ def get_running_processes():
                 if process_name.lower() in system_processes:
                     continue
 
+                # Ignore very small background processes
+                if ram_mb < 50:
+                    continue
+
                 processes.append({
                     "PID": info.get("pid"),
                     "Application": info.get("name") or "Unknown",
@@ -318,7 +322,9 @@ def get_running_processes():
         return []
 
     processes.sort(
-        key=lambda x: x["RAM (MB)"],
+        key=lambda x: (
+            x["CPU %"] + x["GPU %"]
+        ),
         reverse=True
     )
 
