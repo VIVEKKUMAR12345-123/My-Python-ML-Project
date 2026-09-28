@@ -259,8 +259,115 @@ def get_gpu_usage_by_process():
     return gpu_usage
 
 
+def get_process_cpu_usage(proc):
+    try:
+        cpu_times = proc.cpu_times()
+
+        current_cpu_time = (
+            cpu_times.user +
+            cpu_times.system
+        )
+
+        current_time = time.time()
+
+        pid = proc.pid
+
+        if "process_cpu_baseline" not in st.session_state:
+            st.session_state.process_cpu_baseline = {}
+
+        previous = st.session_state.process_cpu_baseline.get(pid)
+
+        st.session_state.process_cpu_baseline[pid] = (
+            current_cpu_time,
+            current_time
+        )
+
+        if previous is None:
+            return 0.0
+
+        previous_cpu_time, previous_time = previous
+
+        elapsed_time = current_time - previous_time
+        cpu_time_used = current_cpu_time - previous_cpu_time
+
+        if elapsed_time <= 0:
+            return 0.0
+
+        cpu_count = psutil.cpu_count(logical=True) or 1
+
+        cpu_percent = (
+            cpu_time_used /
+            (elapsed_time * cpu_count)
+        ) * 100
+
+        return round(
+            min(max(cpu_percent, 0.0), 100.0),
+            1
+        )
+
+    except (
+        psutil.NoSuchProcess,
+        psutil.AccessDenied,
+        psutil.ZombieProcess
+    ):
+        return 0.0
+
+
+def get_cpu_usage_by_process():
+    cpu_usage = {}
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-Command",
+                "Get-CimInstance "
+                "Win32_PerfFormattedData_PerfProc_Process | "
+                "Select-Object IDProcess, Name, PercentProcessorTime | "
+                "ConvertTo-Json -Compress"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode != 0 or not result.stdout.strip():
+            return cpu_usage
+
+        data = json.loads(result.stdout)
+
+        if isinstance(data, dict):
+            data = [data]
+
+        for item in data:
+
+            pid = item.get("IDProcess")
+            value = item.get("PercentProcessorTime", 0)
+
+            if pid is None:
+                continue
+
+            try:
+                pid = int(pid)
+                value = float(value)
+            except:
+                continue
+
+            # Keep CPU percentage between 0 and 100
+            value = min(max(value, 0.0), 100.0)
+
+            cpu_usage[pid] = round(value, 1)
+
+    except Exception:
+        return {}
+
+    return cpu_usage
+
+
 def get_running_processes():
     processes = []
+
+    cpu_usage_by_process = get_cpu_usage_by_process()
 
     try:
         gpu_usage_by_process = get_gpu_usage_by_process()
@@ -279,7 +386,11 @@ def get_running_processes():
                 else:
                     ram_mb = 0.0
 
-                cpu_percent = proc.cpu_percent(interval=None)
+                cpu_percent = cpu_usage_by_process.get(
+                    info.get("pid"),
+                    0.0
+                )
+
 
                 process_name = info.get("name") or "Unknown"
 
@@ -329,6 +440,67 @@ def get_running_processes():
     )
 
     return processes
+
+
+def get_actual_applications():
+    processes = get_running_processes()
+
+    applications = {}
+
+    for proc in processes:
+
+        name = proc["Application"]
+
+        # Convert process name into a cleaner application name
+        app_name = name
+
+        if app_name.lower().endswith(".exe"):
+            app_name = app_name[:-4]
+
+        # Group same application processes together
+        if app_name not in applications:
+
+            applications[app_name] = {
+                "Application": app_name,
+                "Processes": 0,
+                "CPU %": 0.0,
+                "RAM (MB)": 0.0,
+                "GPU %": 0.0
+            }
+
+        applications[app_name]["Processes"] += 1
+
+        applications[app_name]["CPU %"] += proc["CPU %"]
+
+        applications[app_name]["RAM (MB)"] += proc["RAM (MB)"]
+
+        applications[app_name]["GPU %"] += proc["GPU %"]
+
+    result = list(applications.values())
+
+    for app in result:
+
+        app["CPU %"] = round(
+            min(app["CPU %"], 100.0),
+            1
+        )
+
+        app["RAM (MB)"] = round(
+            app["RAM (MB)"],
+            1
+        )
+
+        app["GPU %"] = round(
+            min(app["GPU %"], 100.0),
+            1
+        )
+
+    result.sort(
+        key=lambda x: x["RAM (MB)"],
+        reverse=True
+    )
+
+    return result
 
 
 def get_system_info():
@@ -429,6 +601,60 @@ def get_system_info():
 
     except Exception:
         system_info["RAM Type"] = "Unknown"
+
+    # ========================================================
+    # RAM SPEED
+    # ========================================================
+
+    try:
+        ram_speed_result = subprocess.run(
+            [
+                "powershell",
+                "-Command",
+                "(Get-CimInstance Win32_PhysicalMemory).Speed"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3
+        )
+
+        speed_lines = [
+            line.strip()
+            for line in ram_speed_result.stdout.strip().splitlines()
+            if line.strip()
+        ]
+
+        if speed_lines:
+            speeds = []
+
+            for speed in speed_lines:
+                try:
+                    speeds.append(int(float(speed)))
+                except ValueError:
+                    pass
+
+            if speeds:
+                unique_speeds = sorted(set(speeds))
+
+                if len(unique_speeds) == 1:
+                    system_info["RAM Speed"] = (
+                        f"{unique_speeds[0]} MT/s"
+                    )
+                else:
+                    system_info["RAM Speed"] = (
+                        ", ".join(
+                            f"{speed} MT/s"
+                            for speed in unique_speeds
+                        )
+                    )
+            else:
+                system_info["RAM Speed"] = "N/A"
+
+        else:
+            system_info["RAM Speed"] = "N/A"
+
+    except Exception:
+        system_info["RAM Speed"] = "N/A"
 
 
     # ========================================================
@@ -1074,6 +1300,35 @@ if page == "🏠 Overview":
 
 
 # ============================================================
+# INITIALIZE SESSION HISTORY
+# ============================================================
+
+if "history" not in st.session_state:
+
+    if HISTORY_FILE.exists():
+
+        st.session_state.history = pd.read_csv(
+            HISTORY_FILE
+        )
+
+    else:
+
+        st.session_state.history = pd.DataFrame(
+            columns=[
+                "Time",
+                "CPU Usage",
+                "CPU Temperature",
+                "RAM Usage",
+                "GPU Usage",
+                "GPU Temperature",
+                "Disk Usage",
+                "Process Count",
+                "AI Risk Level"
+            ]
+        )
+
+
+# ============================================================
 # REAL-TIME MONITORING
 # ============================================================
 
@@ -1138,6 +1393,54 @@ def realtime_dashboard():
             st.session_state.process_data = get_running_processes()
 
         running_processes = st.session_state.process_data
+        
+        if running_processes:
+
+            process_df = pd.DataFrame(running_processes)
+
+            total_apps = len(process_df)
+
+            top_cpu = process_df.loc[
+                process_df["CPU %"].idxmax()
+            ]
+
+            top_ram = process_df.loc[
+                process_df["RAM (MB)"].idxmax()
+            ]
+
+            top_gpu = process_df.loc[
+                process_df["GPU %"].idxmax()
+            ]
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric(
+                    "🖥️ Running Applications",
+                    total_apps
+                )
+
+            with col2:
+                st.metric(
+                    "⚙️ Highest CPU",
+                    f"{top_cpu['CPU %']}%"
+                )
+                st.caption(top_cpu["Application"])
+
+            with col3:
+                st.metric(
+                    "🧠 Highest RAM",
+                    f"{top_ram['RAM (MB)']} MB"
+                )
+                st.caption(top_ram["Application"])
+
+            with col4:
+                st.metric(
+                    "🎮 Highest GPU",
+                    f"{top_gpu['GPU %']}%"
+                )
+                st.caption(top_gpu["Application"])
+
 
         if running_processes:
 
@@ -1580,6 +1883,10 @@ if page == "🖥️ System Info":
 
         st.write(
             f"**RAM Type:** {system_info['RAM Type']}"
+        )
+
+        st.write(
+            f"**RAM Speed:** {system_info['RAM Speed']}"
         )
 
         st.write(
