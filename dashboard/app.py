@@ -41,26 +41,6 @@ except Exception as e:
     st.error(f"AI Model could not be loaded: {e}")
     st.stop()
 
-# ============================================================
-# LIVE DATA HISTORY
-# ============================================================
-
-
-if "history" not in st.session_state:
-    st.session_state.history = pd.DataFrame(
-        columns=[
-            "Time",
-            "CPU Usage",
-            "CPU Temperature",
-            "RAM Usage",
-            "GPU Usage",
-            "GPU Temperature",
-            "Disk Usage",
-            "Process Count",
-            "AI Risk Level"
-        ]
-    )
-
 
 # ============================================================
 # FUNCTIONS
@@ -259,72 +239,21 @@ def get_gpu_usage_by_process():
     return gpu_usage
 
 
-def get_process_cpu_usage(proc):
-    try:
-        cpu_times = proc.cpu_times()
-
-        current_cpu_time = (
-            cpu_times.user +
-            cpu_times.system
-        )
-
-        current_time = time.time()
-
-        pid = proc.pid
-
-        if "process_cpu_baseline" not in st.session_state:
-            st.session_state.process_cpu_baseline = {}
-
-        previous = st.session_state.process_cpu_baseline.get(pid)
-
-        st.session_state.process_cpu_baseline[pid] = (
-            current_cpu_time,
-            current_time
-        )
-
-        if previous is None:
-            return 0.0
-
-        previous_cpu_time, previous_time = previous
-
-        elapsed_time = current_time - previous_time
-        cpu_time_used = current_cpu_time - previous_cpu_time
-
-        if elapsed_time <= 0:
-            return 0.0
-
-        cpu_count = psutil.cpu_count(logical=True) or 1
-
-        cpu_percent = (
-            cpu_time_used /
-            (elapsed_time * cpu_count)
-        ) * 100
-
-        return round(
-            min(max(cpu_percent, 0.0), 100.0),
-            1
-        )
-
-    except (
-        psutil.NoSuchProcess,
-        psutil.AccessDenied,
-        psutil.ZombieProcess
-    ):
-        return 0.0
-
-
 def get_cpu_usage_by_process():
+
     cpu_usage = {}
 
     try:
+
         result = subprocess.run(
             [
                 "powershell",
                 "-Command",
-                "Get-CimInstance "
-                "Win32_PerfFormattedData_PerfProc_Process | "
-                "Select-Object IDProcess, Name, PercentProcessorTime | "
-                "ConvertTo-Json -Compress"
+                """
+                Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
+                Select-Object IDProcess, PercentProcessorTime |
+                ConvertTo-Json -Compress
+                """
             ],
             capture_output=True,
             text=True,
@@ -350,13 +279,14 @@ def get_cpu_usage_by_process():
             try:
                 pid = int(pid)
                 value = float(value)
-            except:
+
+                cpu_usage[pid] = round(
+                    max(value, 0.0),
+                    1
+                )
+
+            except (ValueError, TypeError):
                 continue
-
-            # Keep CPU percentage between 0 and 100
-            value = min(max(value, 0.0), 100.0)
-
-            cpu_usage[pid] = round(value, 1)
 
     except Exception:
         return {}
@@ -1326,11 +1256,7 @@ if "history" not in st.session_state:
                 "AI Risk Level"
             ]
         )
-
-
-# ============================================================
-# REAL-TIME MONITORING
-# ============================================================
+    
 
 @st.fragment(run_every="1s")
 def realtime_dashboard():
@@ -1351,7 +1277,6 @@ def realtime_dashboard():
         if cpu_temperature is not None
         else "N/A"
     )
-
 
 
     # ========================================================
@@ -1389,14 +1314,34 @@ def realtime_dashboard():
             st.session_state.process_data = get_running_processes()
 
         if st.button("🔄 Refresh Applications"):
-
             st.session_state.process_data = get_running_processes()
 
         running_processes = st.session_state.process_data
+
+        # GROUP SAME APPLICATIONS
+        application_data = {}
+
+        for process in running_processes:
+
+            app_name = process["Application"]
+
+            if app_name not in application_data:
+                application_data[app_name] = {
+                    "Application": app_name,
+                    "CPU %": 0,
+                    "RAM (MB)": 0,
+                    "GPU %": 0
+                }
+
+            application_data[app_name]["CPU %"] += process["CPU %"]
+            application_data[app_name]["RAM (MB)"] += process["RAM (MB)"]
+            application_data[app_name]["GPU %"] += process["GPU %"]
+
+        running_applications = list(application_data.values())
         
         if running_processes:
 
-            process_df = pd.DataFrame(running_processes)
+            process_df = pd.DataFrame(running_applications)
 
             total_apps = len(process_df)
 
@@ -1444,7 +1389,7 @@ def realtime_dashboard():
 
         if running_processes:
 
-            process_df = pd.DataFrame(running_processes)
+            process_df = pd.DataFrame(running_applications)
 
             st.dataframe(
                 process_df.head(15),
