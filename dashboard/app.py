@@ -43,6 +43,19 @@ except Exception as e:
 
 
 # ============================================================
+# LOAD AI ANALYSIS MODEL
+# ============================================================
+
+AI_ANALYSIS_MODEL_PATH = BASE_DIR / "models" / "pc_ai_analysis_model.pkl"
+
+try:
+    ai_analysis_model = joblib.load(AI_ANALYSIS_MODEL_PATH)
+except Exception as e:
+    st.error(f"AI Analysis Model could not be loaded: {e}")
+    st.stop()
+
+
+# ============================================================
 # FUNCTIONS
 # ============================================================
 
@@ -849,6 +862,42 @@ def predict_risk(
     return prediction
 
 
+def predict_ai_analysis(
+    cpu_usage,
+    cpu_temperature,
+    ram_usage,
+    gpu_usage,
+    gpu_temperature,
+    disk_usage,
+    process_count
+):
+
+    features = pd.DataFrame(
+        [[
+            cpu_usage,
+            cpu_temperature,
+            ram_usage,
+            gpu_usage,
+            gpu_temperature,
+            disk_usage,
+            process_count
+        ]],
+        columns=[
+            "cpu_usage",
+            "cpu_temp",
+            "ram_usage",
+            "gpu_usage",
+            "gpu_temp",
+            "disk_usage",
+            "process_count"
+        ]
+    )
+
+    prediction = ai_analysis_model.predict(features)[0]
+
+    return prediction
+
+
 # ============================================================
 # SMART HEALTH ALERT SYSTEM
 # ============================================================
@@ -1081,6 +1130,17 @@ def generate_risk_explanation(
             "The Machine Learning model predicted a WARNING risk level."
         )
 
+    # Normal system
+    if not reasons:
+        reasons.append(
+            "No significant risk factors detected."
+        )
+
+    if not recommendations:
+        recommendations.append(
+            "No immediate action required. "
+            "Your PC is operating normally."
+        )
 
     return reasons, recommendations
 
@@ -1271,6 +1331,16 @@ def realtime_dashboard():
         process_count,
         uptime
     ) = get_pc_health()
+
+    ai_analysis = predict_ai_analysis(
+        cpu_usage,
+        cpu_temperature,
+        ram_usage,
+        gpu_usage,
+        gpu_temperature,
+        disk_usage,
+        process_count
+    )
 
     cpu_temp_display = (
         f"{cpu_temperature:.1f} °C"
@@ -1546,6 +1616,26 @@ def realtime_dashboard():
             index=False
         )
 
+    # ========================================================
+    # SAFETY CHECK FOR SESSION HISTORY
+    # ========================================================
+
+    if "history" not in st.session_state:
+
+        st.session_state.history = pd.DataFrame(
+            columns=[
+                "Time",
+                "CPU Usage",
+                "CPU Temperature",
+                "RAM Usage",
+                "GPU Usage",
+                "GPU Temperature",
+                "Disk Usage",
+                "Process Count",
+                "AI Risk Level"
+            ]
+        )
+
     # Update live graph history
     st.session_state.history = pd.concat(
         [st.session_state.history, new_data],
@@ -1585,6 +1675,33 @@ def realtime_dashboard():
                 "🔴 **AI Risk Level: CRITICAL**\n\n"
                 "The AI model has detected potentially critical system conditions."
             )
+        
+
+        # ========================================================
+        # AI PROBLEM DIAGNOSIS
+        # ========================================================
+
+        st.markdown("### 🧠 AI Problem Diagnosis")
+
+        ai_analysis_names = {
+            "Healthy": "🟢 Healthy",
+            "CPU_Problem": "🔴 CPU Performance Problem",
+            "CPU_Thermal_Problem": "🌡️ CPU Thermal Problem",
+            "Memory_Problem": "🟠 Memory / RAM Problem",
+            "GPU_Problem": "🔴 GPU Performance Problem",
+            "GPU_Thermal_Problem": "🌡️ GPU Thermal Problem",
+            "Storage_Problem": "💾 Storage / Disk Problem",
+            "Multiple_Problems": "⚠️ Multiple System Problems"
+        }
+
+        ai_analysis_display = ai_analysis_names.get(
+            ai_analysis,
+            ai_analysis
+        )
+
+        st.info(
+            f"**AI Diagnosis:** {ai_analysis_display}"
+        )
 
 
         with st.expander("🚨 Smart Health Alerts", expanded=False):
