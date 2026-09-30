@@ -1704,6 +1704,192 @@ def realtime_dashboard():
         )
 
 
+        # ========================================================
+        # AI DIAGNOSIS DETAILS
+        # ========================================================
+
+        diagnosis_factors = []
+
+        if ram_usage >= 80:
+            diagnosis_factors.append(
+                f"RAM usage is high ({ram_usage:.1f}%)."
+            )
+
+        if cpu_usage >= 75:
+            diagnosis_factors.append(
+                f"CPU usage is high ({cpu_usage:.1f}%)."
+            )
+
+        if cpu_temperature >= 80:
+            diagnosis_factors.append(
+                f"CPU temperature is high ({cpu_temperature:.1f} °C)."
+            )
+
+        if gpu_usage >= 80:
+            diagnosis_factors.append(
+                f"GPU usage is high ({gpu_usage:.1f}%)."
+            )
+
+        if gpu_temperature >= 80:
+            diagnosis_factors.append(
+                f"GPU temperature is high ({gpu_temperature:.1f} °C)."
+            )
+
+        if disk_usage >= 85:
+            diagnosis_factors.append(
+                f"Disk usage is high ({disk_usage:.1f}%)."
+            )
+
+        if process_count >= 250:
+            diagnosis_factors.append(
+                f"Process count is high ({process_count})."
+            )
+
+        if diagnosis_factors:
+
+            st.markdown("#### 🔍 Detected Factors")
+
+            for factor in diagnosis_factors:
+                st.write(f"• {factor}")
+
+        else:
+
+            st.success(
+                "🟢 No significant system factors detected."
+            )
+
+
+        # ========================================================
+        # AI DIAGNOSIS RECOMMENDATIONS
+        # ========================================================
+
+        diagnosis_recommendations = []
+
+        if ai_analysis == "Healthy":
+
+            diagnosis_recommendations.append(
+                "No immediate action required. Your PC is operating normally."
+            )
+
+        elif ai_analysis == "CPU_Problem":
+
+            diagnosis_recommendations.append(
+                "Check applications using high CPU resources."
+            )
+            diagnosis_recommendations.append(
+                "Close unnecessary background applications to reduce CPU load."
+            )
+
+        elif ai_analysis == "CPU_Thermal_Problem":
+
+            diagnosis_recommendations.append(
+                "Check CPU cooling and airflow."
+            )
+            diagnosis_recommendations.append(
+                "Avoid sustained heavy CPU workloads until temperature decreases."
+            )
+
+        elif ai_analysis == "Memory_Problem":
+
+            diagnosis_recommendations.append(
+                "Close unnecessary applications using large amounts of RAM."
+            )
+            diagnosis_recommendations.append(
+                "Check which running applications are consuming the most memory."
+            )
+
+        elif ai_analysis == "GPU_Problem":
+
+            diagnosis_recommendations.append(
+                "Check applications using high GPU resources."
+            )
+            diagnosis_recommendations.append(
+                "Close unnecessary GPU-intensive applications if they are not required."
+            )
+
+        elif ai_analysis == "GPU_Thermal_Problem":
+
+            diagnosis_recommendations.append(
+                "Check GPU cooling and airflow."
+            )
+            diagnosis_recommendations.append(
+                "Reduce sustained GPU workload until the temperature decreases."
+            )
+
+        elif ai_analysis == "Storage_Problem":
+
+            diagnosis_recommendations.append(
+                "Check available disk space and remove unnecessary files."
+            )
+            diagnosis_recommendations.append(
+                "Monitor disk usage if storage utilization remains high."
+            )
+
+        elif ai_analysis == "Multiple_Problems":
+
+            if ram_usage >= 80:
+
+                diagnosis_recommendations.append(
+                    f"RAM usage is high ({ram_usage:.1f}%). "
+                    "Close unnecessary memory-intensive applications."
+                )
+
+            if cpu_usage >= 75:
+
+                diagnosis_recommendations.append(
+                    f"CPU usage is high ({cpu_usage:.1f}%). "
+                    "Check applications using high CPU resources."
+                )
+
+            if cpu_temperature >= 80:
+
+                diagnosis_recommendations.append(
+                    f"CPU temperature is high ({cpu_temperature:.1f} °C). "
+                    "Check CPU cooling and airflow."
+                )
+
+            if gpu_usage >= 80:
+
+                diagnosis_recommendations.append(
+                    f"GPU usage is high ({gpu_usage:.1f}%). "
+                    "Check which applications are using the GPU."
+                )
+
+            if gpu_temperature >= 80:
+
+                diagnosis_recommendations.append(
+                    f"GPU temperature is high ({gpu_temperature:.1f} °C). "
+                    "Check GPU cooling and airflow."
+                )
+
+            if disk_usage >= 85:
+
+                diagnosis_recommendations.append(
+                    f"Disk usage is high ({disk_usage:.1f}%). "
+                    "Check available storage space."
+                )
+
+            if process_count >= 250:
+
+                diagnosis_recommendations.append(
+                    f"Process count is high ({process_count}). "
+                    "Close unnecessary background applications."
+                )
+
+            if not diagnosis_recommendations:
+
+                diagnosis_recommendations.append(
+                    "Multiple system conditions require monitoring."
+                )
+
+        if diagnosis_recommendations:
+
+            st.markdown("#### 💡 AI Recommendations")
+
+            for recommendation in diagnosis_recommendations:
+                st.write(f"• {recommendation}")
+
+
         with st.expander("🚨 Smart Health Alerts", expanded=False):
 
             if alerts:
@@ -1727,13 +1913,6 @@ def realtime_dashboard():
 
                 for reason in reasons:
                     st.write(f"• {reason}")
-
-                if recommendations:
-
-                    st.markdown("### 💡 Recommendations")
-
-                    for recommendation in recommendations:
-                        st.write(f"• {recommendation}")
 
             else:
 
@@ -2346,6 +2525,4 @@ if page == "📈 History":
         if not HISTORY_FILE.exists():
             st.info("No monitoring history available to clear.")
 
-
-
-
+            
