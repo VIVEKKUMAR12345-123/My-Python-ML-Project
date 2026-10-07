@@ -258,126 +258,161 @@ def get_cpu_usage_by_process():
 
     try:
 
-        result = subprocess.run(
-            [
-                "powershell",
-                "-Command",
-                """
-                Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
-                Select-Object IDProcess, PercentProcessorTime |
-                ConvertTo-Json -Compress
-                """
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        # Total logical CPU cores/threads
+        cpu_count = psutil.cpu_count(logical=True) or 1
 
-        if result.returncode != 0 or not result.stdout.strip():
-            return cpu_usage
+        processes = []
 
-        data = json.loads(result.stdout)
-
-        if isinstance(data, dict):
-            data = [data]
-
-        for item in data:
-
-            pid = item.get("IDProcess")
-            value = item.get("PercentProcessorTime", 0)
-
-            if pid is None:
-                continue
+        # First measurement
+        for proc in psutil.process_iter(["pid", "name"]):
 
             try:
-                pid = int(pid)
-                value = float(value)
+                proc.cpu_percent(None)
+                processes.append(proc)
+
+            except (
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+                psutil.ZombieProcess
+            ):
+                continue
+
+        # CPU sampling interval
+        time.sleep(0.5)
+
+        # Second measurement
+        for proc in processes:
+
+            try:
+
+                pid = proc.pid
+
+                value = proc.cpu_percent(None)
+
+                if value is None:
+                    value = 0.0
+
+                # Convert process CPU percentage
+                # to total-system CPU percentage
+                normalized_value = float(value) / cpu_count
 
                 cpu_usage[pid] = round(
-                    max(value, 0.0),
+                    min(max(normalized_value, 0.0), 100.0),
                     1
                 )
 
-            except (ValueError, TypeError):
+            except (
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+                psutil.ZombieProcess
+            ):
                 continue
 
     except Exception:
+
         return {}
 
     return cpu_usage
 
 
 def get_running_processes():
+
     processes = []
 
     cpu_usage_by_process = get_cpu_usage_by_process()
 
     try:
         gpu_usage_by_process = get_gpu_usage_by_process()
+    except Exception:
+        gpu_usage_by_process = {}
+
+    # Windows system processes that are not useful
+    # for the application monitoring table.
+    system_processes = {
+        "system",
+        "system idle process",
+        "registry",
+        "smss.exe",
+        "csrss.exe",
+        "wininit.exe",
+        "services.exe",
+        "lsass.exe",
+        "svchost.exe",
+        "dwm.exe",
+        "conhost.exe",
+        "fontdrvhost.exe",
+        "memory compression"
+    }
+
+    try:
+
         for proc in psutil.process_iter(
-            ['pid', 'name', 'memory_info']
+            ["pid", "name", "memory_info"]
         ):
+
             try:
+
                 info = proc.info
 
-                memory_info = info.get("memory_info")
-
-                if memory_info:
-                    ram_mb = round(
-                        memory_info.rss / (1024 * 1024), 1
-                    )
-                else:
-                    ram_mb = 0.0
-
-                cpu_percent = cpu_usage_by_process.get(
-                    info.get("pid"),
-                    0.0
-                )
-
-
+                pid = info.get("pid")
                 process_name = info.get("name") or "Unknown"
-
-                system_processes = [
-                    "system",
-                    "system idle process",
-                    "registry",
-                    "smss.exe",
-                    "csrss.exe",
-                    "wininit.exe",
-                    "services.exe",
-                    "lsass.exe",
-                    "svchost.exe",
-                    "dwm.exe",
-                    "conhost.exe"
-                ]
 
                 if process_name.lower() in system_processes:
                     continue
 
-                # Ignore very small background processes
-                if ram_mb < 50:
-                    continue
+                # RAM usage
+                memory_info = info.get("memory_info")
+
+                if memory_info:
+                    ram_mb = round(
+                        memory_info.rss / (1024 * 1024),
+                        1
+                    )
+                else:
+                    ram_mb = 0.0
+
+                # CPU usage
+                cpu_percent = cpu_usage_by_process.get(
+                    pid,
+                    0.0
+                )
+
+                # GPU usage
+                gpu_percent = gpu_usage_by_process.get(
+                    pid,
+                    0.0
+                )
 
                 processes.append({
-                    "PID": info.get("pid"),
-                    "Application": info.get("name") or "Unknown",
-                    "CPU %": round(cpu_percent, 1),
+                    "PID": pid,
+                    "Application": process_name,
+                    "CPU %": round(
+                        min(max(float(cpu_percent), 0.0), 100.0),
+                        1
+                    ),
                     "RAM (MB)": ram_mb,
-                    "GPU %": gpu_usage_by_process.get(
-                        info.get("pid"),
-                        0.0
+                    "GPU %": round(
+                        min(max(float(gpu_percent), 0.0), 100.0),
+                        1
                     )
                 })
 
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (
+                psutil.NoSuchProcess,
+                psutil.AccessDenied,
+                psutil.ZombieProcess
+            ):
                 continue
 
     except Exception:
         return []
 
+    # Show the most resource-intensive processes first
     processes.sort(
         key=lambda x: (
-            x["CPU %"] + x["GPU %"]
+            x["CPU %"] +
+            x["GPU %"] +
+            (x["RAM (MB)"] / 1000)
         ),
         reverse=True
     )
@@ -1316,6 +1351,68 @@ if "history" not in st.session_state:
                 "AI Risk Level"
             ]
         )
+
+
+def group_processes_by_application(processes):
+
+    applications = {}
+
+    for proc in processes:
+
+        name = proc["Application"]
+
+        # Remove .exe
+        if name.lower().endswith(".exe"):
+            app_name = name[:-4]
+        else:
+            app_name = name
+
+        if app_name not in applications:
+
+            applications[app_name] = {
+                "Application": app_name,
+                "Processes": 0,
+                "CPU %": 0.0,
+                "RAM (MB)": 0.0,
+                "GPU %": 0.0
+            }
+
+        applications[app_name]["Processes"] += 1
+
+        applications[app_name]["CPU %"] += proc["CPU %"]
+
+        applications[app_name]["RAM (MB)"] += proc["RAM (MB)"]
+
+        applications[app_name]["GPU %"] += proc["GPU %"]
+
+    result = list(applications.values())
+
+    for app in result:
+
+        app["CPU %"] = round(
+            min(app["CPU %"], 100.0),
+            1
+        )
+
+        app["RAM (MB)"] = round(
+            app["RAM (MB)"],
+            1
+        )
+
+        app["GPU %"] = round(
+            min(app["GPU %"], 100.0),
+            1
+        )
+
+    result.sort(
+        key=lambda x: (
+            x["CPU %"] +
+            x["GPU %"]
+        ),
+        reverse=True
+    )
+
+    return result
     
 
 @st.fragment(run_every="1s")
@@ -1388,6 +1485,10 @@ def realtime_dashboard():
 
         running_processes = st.session_state.process_data
 
+        running_applications = group_processes_by_application(
+            running_processes
+        )
+
         # GROUP SAME APPLICATIONS
         application_data = {}
 
@@ -1445,7 +1546,7 @@ def realtime_dashboard():
             with col3:
                 st.metric(
                     "🧠 Highest RAM",
-                    f"{top_ram['RAM (MB)']} MB"
+                    f"{top_ram['RAM (MB)']:.1f} MB"
                 )
                 st.caption(top_ram["Application"])
 
@@ -1457,12 +1558,14 @@ def realtime_dashboard():
                 st.caption(top_gpu["Application"])
 
 
-        if running_processes:
+        if running_applications:
 
             process_df = pd.DataFrame(running_applications)
 
+            process_df["RAM (MB)"] = process_df["RAM (MB)"].round(1)
+
             st.dataframe(
-                process_df.head(15),
+                process_df,
                 use_container_width=True,
                 hide_index=True
             )
