@@ -35,6 +35,34 @@ DATA_DIR.mkdir(exist_ok=True)
 
 HISTORY_FILE = DATA_DIR / "pc_health_history.csv"
 
+HISTORY_COLUMNS = [
+    "Time",
+    "CPU Usage",
+    "CPU Temperature",
+    "RAM Usage",
+    "GPU Usage",
+    "GPU Temperature",
+    "Disk Usage",
+    "Process Count",
+    "AI Risk Level",
+]
+
+# Keep CSV history compatible with earlier app versions that used fewer columns.
+if HISTORY_FILE.exists():
+    try:
+        _history_file_data = pd.read_csv(HISTORY_FILE)
+        _history_file_data.columns = _history_file_data.columns.str.strip()
+        _original_columns = list(_history_file_data.columns)
+        for _column in HISTORY_COLUMNS:
+            if _column not in _history_file_data.columns:
+                _history_file_data[_column] = pd.NA
+        _history_file_data = _history_file_data[HISTORY_COLUMNS]
+        if _original_columns != HISTORY_COLUMNS:
+            _history_file_data.to_csv(HISTORY_FILE, index=False)
+    except Exception:
+        # Leave the original file untouched if it cannot be read safely.
+        pass
+
 try:
     model = joblib.load(MODEL_PATH)
 except Exception as e:
@@ -169,6 +197,7 @@ def get_graphics_cards():
             else:
                 vram_gb = "Unknown"
 
+            name = str(name or "Unknown")
             name_lower = name.lower()
 
             # Basic classification
@@ -427,7 +456,7 @@ def get_actual_applications():
 
     for proc in processes:
 
-        name = proc["Application"]
+        name = str(proc.get("Application") or "Unknown")
 
         # Convert process name into a cleaner application name
         app_name = name
@@ -448,11 +477,11 @@ def get_actual_applications():
 
         applications[app_name]["Processes"] += 1
 
-        applications[app_name]["CPU %"] += proc["CPU %"]
+        applications[app_name]["CPU %"] += float(proc.get("CPU %") or 0.0)
 
-        applications[app_name]["RAM (MB)"] += proc["RAM (MB)"]
+        applications[app_name]["RAM (MB)"] += float(proc.get("RAM (MB)") or 0.0)
 
-        applications[app_name]["GPU %"] += proc["GPU %"]
+        applications[app_name]["GPU %"] += float(proc.get("GPU %") or 0.0)
 
     result = list(applications.values())
 
@@ -971,7 +1000,7 @@ def generate_health_alerts(
                 "Check CPU cooling and airflow."
             )
 
-        elif cpu_temperature >= 80:
+        elif cpu_temperature is not None and cpu_temperature >= 80:
             alerts.append(
                 "🟡 CPU temperature is high. "
                 "Monitor cooling performance."
@@ -993,7 +1022,7 @@ def generate_health_alerts(
 
 
     # GPU Usage
-    if gpu_usage >= 95:
+    if gpu_usage is not None and gpu_usage >= 95:
         alerts.append(
             "🟡 GPU usage is very high. "
             "This can be normal during gaming or GPU-intensive workloads."
@@ -1001,13 +1030,13 @@ def generate_health_alerts(
 
 
     # GPU Temperature
-    if gpu_temperature >= 85:
+    if gpu_temperature is not None and gpu_temperature >= 85:
         alerts.append(
             "🔴 GPU temperature is high. "
             "Check GPU cooling and airflow."
         )
 
-    elif gpu_temperature >= 80:
+    elif gpu_temperature is not None and gpu_temperature >= 80:
         alerts.append(
             "🟡 GPU temperature is elevated. "
             "Monitor GPU temperature during heavy workloads."
@@ -1077,7 +1106,7 @@ def generate_risk_explanation(
                 "Check CPU cooling, fan operation and airflow."
             )
 
-        elif cpu_temperature >= 80:
+        elif cpu_temperature is not None and cpu_temperature >= 80:
             reasons.append(
                 f"CPU temperature is elevated "
                 f"({cpu_temperature:.1f} °C)."
@@ -1106,7 +1135,7 @@ def generate_risk_explanation(
 
 
     # GPU
-    if gpu_usage >= 95:
+    if gpu_usage is not None and gpu_usage >= 95:
         reasons.append(
             f"GPU usage is very high ({gpu_usage:.1f}%)."
         )
@@ -1117,7 +1146,7 @@ def generate_risk_explanation(
 
 
     # GPU Temperature
-    if gpu_temperature >= 85:
+    if gpu_temperature is not None and gpu_temperature >= 85:
         reasons.append(
             f"GPU temperature is high ({gpu_temperature:.1f} °C)."
         )
@@ -1125,7 +1154,7 @@ def generate_risk_explanation(
             "Check GPU cooling and airflow."
         )
 
-    elif gpu_temperature >= 80:
+    elif gpu_temperature is not None and gpu_temperature >= 80:
         reasons.append(
             f"GPU temperature is elevated ({gpu_temperature:.1f} °C)."
         )
@@ -1335,22 +1364,15 @@ if "history" not in st.session_state:
         st.session_state.history = pd.read_csv(
             HISTORY_FILE
         )
+        st.session_state.history.columns = st.session_state.history.columns.str.strip()
+        for column in HISTORY_COLUMNS:
+            if column not in st.session_state.history.columns:
+                st.session_state.history[column] = pd.NA
+        st.session_state.history = st.session_state.history[HISTORY_COLUMNS]
 
     else:
 
-        st.session_state.history = pd.DataFrame(
-            columns=[
-                "Time",
-                "CPU Usage",
-                "CPU Temperature",
-                "RAM Usage",
-                "GPU Usage",
-                "GPU Temperature",
-                "Disk Usage",
-                "Process Count",
-                "AI Risk Level"
-            ]
-        )
+        st.session_state.history = pd.DataFrame(columns=HISTORY_COLUMNS)
 
 
 def group_processes_by_application(processes):
@@ -1359,7 +1381,7 @@ def group_processes_by_application(processes):
 
     for proc in processes:
 
-        name = proc["Application"]
+        name = str(proc.get("Application") or "Unknown")
 
         # Remove .exe
         if name.lower().endswith(".exe"):
@@ -1379,11 +1401,11 @@ def group_processes_by_application(processes):
 
         applications[app_name]["Processes"] += 1
 
-        applications[app_name]["CPU %"] += proc["CPU %"]
+        applications[app_name]["CPU %"] += float(proc.get("CPU %") or 0.0)
 
-        applications[app_name]["RAM (MB)"] += proc["RAM (MB)"]
+        applications[app_name]["RAM (MB)"] += float(proc.get("RAM (MB)") or 0.0)
 
-        applications[app_name]["GPU %"] += proc["GPU %"]
+        applications[app_name]["GPU %"] += float(proc.get("GPU %") or 0.0)
 
     result = list(applications.values())
 
@@ -1415,6 +1437,214 @@ def group_processes_by_application(processes):
     return result
     
 
+
+
+# ============================================================
+# PERFORMANCE PAGE (ISOLATED REFRESH)
+# ============================================================
+
+@st.fragment(run_every="5s")
+def performance_dashboard():
+    # Continue collecting health history while this page is active.
+    if time.time() - st.session_state.get("last_performance_history_save", 0) >= 5:
+        (
+            _cpu_usage,
+            _cpu_temperature,
+            _ram_usage,
+            _gpu_usage,
+            _gpu_temperature,
+            _disk_usage,
+            _process_count,
+            _uptime,
+        ) = get_pc_health()
+
+        _risk = predict_risk(
+            _cpu_usage,
+            0.0 if _cpu_temperature is None else float(_cpu_temperature),
+            _ram_usage,
+            0.0 if _gpu_usage is None else float(_gpu_usage),
+            0.0 if _gpu_temperature is None else float(_gpu_temperature),
+            _disk_usage,
+            _process_count,
+        )
+
+        _snapshot = pd.DataFrame(
+            [[
+                datetime.now(), _cpu_usage, _cpu_temperature, _ram_usage,
+                _gpu_usage, _gpu_temperature, _disk_usage, _process_count, _risk
+            ]],
+            columns=HISTORY_COLUMNS,
+        )
+        if HISTORY_FILE.exists():
+            _snapshot.to_csv(HISTORY_FILE, mode="a", header=False, index=False)
+        else:
+            _snapshot.to_csv(HISTORY_FILE, mode="w", header=True, index=False)
+
+        if "history" not in st.session_state:
+            st.session_state.history = pd.DataFrame(columns=HISTORY_COLUMNS)
+        st.session_state.history = pd.concat(
+            [st.session_state.history.reindex(columns=HISTORY_COLUMNS), _snapshot],
+            ignore_index=True,
+        ).tail(60)
+        st.session_state.last_performance_history_save = time.time()
+
+    st.title("📊 Performance Monitoring")
+
+    # RUNNING APPLICATIONS
+
+    st.markdown("### 🖥️ Running Applications")
+
+    if "process_data" not in st.session_state:
+        st.session_state.process_data = get_running_processes()
+        st.session_state.last_process_update = time.time()
+
+    if "last_process_update" not in st.session_state:
+        st.session_state.last_process_update = time.time()
+
+    current_time = time.time()
+
+    if current_time - st.session_state.last_process_update >= 5:
+        st.session_state.process_data = get_running_processes()
+        st.session_state.last_process_update = current_time
+
+    if st.button("🔄 Refresh Applications"):
+        st.session_state.process_data = get_running_processes()
+        st.session_state.last_process_update = time.time()
+
+    running_processes = st.session_state.process_data
+
+    running_applications = group_processes_by_application(
+        running_processes
+    )
+
+    if running_applications:
+
+        process_df = pd.DataFrame(running_applications)
+
+        total_apps = len(process_df)
+
+        top_cpu = process_df.loc[
+            process_df["CPU %"].idxmax()
+        ]
+
+        top_ram = process_df.loc[
+            process_df["RAM (MB)"].idxmax()
+        ]
+
+        top_gpu = process_df.loc[
+            process_df["GPU %"].idxmax()
+        ]
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric(
+                "🖥️ Running Applications",
+                total_apps
+            )
+
+        with col2:
+            st.metric(
+                "⚙️ Highest CPU",
+                f"{top_cpu['CPU %']}%"
+            )
+            st.caption(top_cpu["Application"])
+
+        with col3:
+            st.metric(
+                "🧠 Highest RAM",
+                f"{top_ram['RAM (MB)']:.1f} MB"
+            )
+            st.caption(top_ram["Application"])
+
+        with col4:
+            st.metric(
+                "🎮 Highest GPU",
+                f"{top_gpu['GPU %']}%"
+            )
+            st.caption(top_gpu["Application"])
+
+
+    if running_applications:
+
+        process_df = pd.DataFrame(running_applications)
+
+        process_df["RAM (MB)"] = process_df["RAM (MB)"].round(1)
+
+        # RESOURCE SCORE
+        process_df["Resource Score"] = (
+            process_df["CPU %"]
+            + process_df["GPU %"]
+            + (process_df["RAM (MB)"] / 1000)
+        ).round(1)
+
+        search_app = st.text_input(
+            "🔎 Search Application",
+            placeholder="Type application name..."
+        )
+
+        # APPLY SEARCH
+        if search_app:
+
+            process_df = process_df[
+                process_df["Application"].str.contains(
+                    search_app,
+                    case=False,
+                    na=False
+                )
+            ]
+
+        # SORTING OPTION
+        sort_option = st.selectbox(
+            "🔽 Sort Applications By",
+            [
+                "🔥 Overall Resource Usage",
+                "⚙️ CPU Usage",
+                "🧠 RAM Usage",
+                "🎮 GPU Usage"
+            ]
+        )
+
+        if sort_option == "🔥 Overall Resource Usage":
+
+            process_df = process_df.sort_values(
+                "Resource Score",
+                ascending=False
+            )
+
+        elif sort_option == "⚙️ CPU Usage":
+
+            process_df = process_df.sort_values(
+                "CPU %",
+                ascending=False
+            )
+
+        elif sort_option == "🧠 RAM Usage":
+
+            process_df = process_df.sort_values(
+                "RAM (MB)",
+                ascending=False
+            )
+
+        elif sort_option == "🎮 GPU Usage":
+
+            process_df = process_df.sort_values(
+                "GPU %",
+                ascending=False
+            )
+
+        # SHOW TABLE
+        st.dataframe(
+            process_df.drop(columns=["Resource Score"]),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    else:
+        st.info("No running application information available.")
+
+
+
 @st.fragment(run_every="1s")
 def realtime_dashboard():
 
@@ -1429,12 +1659,18 @@ def realtime_dashboard():
         uptime
     ) = get_pc_health()
 
+    # ML models require numeric features. Keep missing sensors as N/A in the UI,
+    # and use a neutral numeric fallback only for model input.
+    cpu_temperature_model = 0.0 if cpu_temperature is None else float(cpu_temperature)
+    gpu_usage_model = 0.0 if gpu_usage is None else float(gpu_usage)
+    gpu_temperature_model = 0.0 if gpu_temperature is None else float(gpu_temperature)
+
     ai_analysis = predict_ai_analysis(
         cpu_usage,
-        cpu_temperature,
+        cpu_temperature_model,
         ram_usage,
-        gpu_usage,
-        gpu_temperature,
+        gpu_usage_model,
+        gpu_temperature_model,
         disk_usage,
         process_count
     )
@@ -1452,10 +1688,10 @@ def realtime_dashboard():
 
     risk_level = predict_risk(
         cpu_usage,
-        cpu_temperature,
+        cpu_temperature_model,
         ram_usage,
-        gpu_usage,
-        gpu_temperature,
+        gpu_usage_model,
+        gpu_temperature_model,
         disk_usage,
         process_count
     )
@@ -1469,109 +1705,6 @@ def realtime_dashboard():
         )
 
         st.divider()
-
-    elif page == "📊 Performance":
-        st.title("📊 Performance Monitoring")
-
-        # RUNNING APPLICATIONS
-
-        st.markdown("### 🖥️ Running Applications")
-
-        if "process_data" not in st.session_state:
-            st.session_state.process_data = get_running_processes()
-
-        if st.button("🔄 Refresh Applications"):
-            st.session_state.process_data = get_running_processes()
-
-        running_processes = st.session_state.process_data
-
-        running_applications = group_processes_by_application(
-            running_processes
-        )
-
-        # GROUP SAME APPLICATIONS
-        application_data = {}
-
-        for process in running_processes:
-
-            app_name = process["Application"]
-
-            if app_name not in application_data:
-                application_data[app_name] = {
-                    "Application": app_name,
-                    "CPU %": 0,
-                    "RAM (MB)": 0,
-                    "GPU %": 0
-                }
-
-            application_data[app_name]["CPU %"] += process["CPU %"]
-            application_data[app_name]["RAM (MB)"] += process["RAM (MB)"]
-            application_data[app_name]["GPU %"] += process["GPU %"]
-
-        running_applications = list(application_data.values())
-        
-        if running_processes:
-
-            process_df = pd.DataFrame(running_applications)
-
-            total_apps = len(process_df)
-
-            top_cpu = process_df.loc[
-                process_df["CPU %"].idxmax()
-            ]
-
-            top_ram = process_df.loc[
-                process_df["RAM (MB)"].idxmax()
-            ]
-
-            top_gpu = process_df.loc[
-                process_df["GPU %"].idxmax()
-            ]
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric(
-                    "🖥️ Running Applications",
-                    total_apps
-                )
-
-            with col2:
-                st.metric(
-                    "⚙️ Highest CPU",
-                    f"{top_cpu['CPU %']}%"
-                )
-                st.caption(top_cpu["Application"])
-
-            with col3:
-                st.metric(
-                    "🧠 Highest RAM",
-                    f"{top_ram['RAM (MB)']:.1f} MB"
-                )
-                st.caption(top_ram["Application"])
-
-            with col4:
-                st.metric(
-                    "🎮 Highest GPU",
-                    f"{top_gpu['GPU %']}%"
-                )
-                st.caption(top_gpu["Application"])
-
-
-        if running_applications:
-
-            process_df = pd.DataFrame(running_applications)
-
-            process_df["RAM (MB)"] = process_df["RAM (MB)"].round(1)
-
-            st.dataframe(
-                process_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-        else:
-            st.info("No running application information available.")
 
     elif page == "🤖 AI Analysis":
         st.title("🤖 AI Health Analysis")
@@ -1600,7 +1733,7 @@ def realtime_dashboard():
         with kpi3:
             st.metric(
                 "🎮 GPU",
-                f"{gpu_usage:.1f}%"
+                f"{gpu_usage:.1f}%" if gpu_usage is not None else "N/A"
             )
 
         with kpi4:
@@ -1675,57 +1808,21 @@ def realtime_dashboard():
     # SAVE COMPLETE MONITORING DATA
     # ========================================================
 
-    new_data = pd.DataFrame(
-        [[
-            datetime.now(),
-            cpu_usage,
-            cpu_temperature,
-            ram_usage,
-            gpu_usage,
-            gpu_temperature,
-            disk_usage,
-            process_count,
-            risk_level
-        ]],
-        columns=[
-            "Time",
-            "CPU Usage",
-            "CPU Temperature",
-            "RAM Usage",
-            "GPU Usage",
-            "GPU Temperature",
-            "Disk Usage",
-            "Process Count",
-            "AI Risk Level"
-        ]
-    )
-
-    # Save data permanently to CSV
-    if HISTORY_FILE.exists():
-
-        new_data.to_csv(
-            HISTORY_FILE,
-            mode="a",
-            header=False,
-            index=False
-        )
-
-    else:
-
-        new_data.to_csv(
-            HISTORY_FILE,
-            mode="w",
-            header=True,
-            index=False
-        )
-
-    # ========================================================
-    # SAFETY CHECK FOR SESSION HISTORY
-    # ========================================================
-
-    if "history" not in st.session_state:
-
-        st.session_state.history = pd.DataFrame(
+    # Save history every 5 seconds, not on every 1-second dashboard refresh.
+    if time.time() - st.session_state.get("last_history_save", 0) >= 5:
+        st.session_state.last_history_save = time.time()
+        new_data = pd.DataFrame(
+            [[
+                datetime.now(),
+                cpu_usage,
+                cpu_temperature,
+                ram_usage,
+                gpu_usage,
+                gpu_temperature,
+                disk_usage,
+                process_count,
+                risk_level
+            ]],
             columns=[
                 "Time",
                 "CPU Usage",
@@ -1739,14 +1836,44 @@ def realtime_dashboard():
             ]
         )
 
-    # Update live graph history
-    st.session_state.history = pd.concat(
-        [st.session_state.history, new_data],
-        ignore_index=True
-    )
+        # Save data permanently to CSV
+        if HISTORY_FILE.exists():
 
-    # Keep only latest 60 readings
-    st.session_state.history = st.session_state.history.tail(60)
+            new_data.to_csv(
+                HISTORY_FILE,
+                mode="a",
+                header=False,
+                index=False
+            )
+
+        else:
+
+            new_data.to_csv(
+                HISTORY_FILE,
+                mode="w",
+                header=True,
+                index=False
+            )
+
+        # ========================================================
+        # SAFETY CHECK FOR SESSION HISTORY
+        # ========================================================
+
+        if "history" not in st.session_state:
+
+            st.session_state.history = pd.DataFrame(columns=HISTORY_COLUMNS)
+
+        # Update live graph history
+        st.session_state.history = pd.concat(
+            [
+                st.session_state.history.reindex(columns=HISTORY_COLUMNS),
+                new_data.reindex(columns=HISTORY_COLUMNS)
+            ],
+            ignore_index=True
+        )
+
+        # Keep only latest 60 readings
+        st.session_state.history = st.session_state.history.tail(60)
 
 
     # ========================================================
@@ -1823,17 +1950,17 @@ def realtime_dashboard():
                 f"CPU usage is high ({cpu_usage:.1f}%)."
             )
 
-        if cpu_temperature >= 80:
+        if cpu_temperature is not None and cpu_temperature >= 80:
             diagnosis_factors.append(
                 f"CPU temperature is high ({cpu_temperature:.1f} °C)."
             )
 
-        if gpu_usage >= 80:
+        if gpu_usage is not None and gpu_usage >= 80:
             diagnosis_factors.append(
                 f"GPU usage is high ({gpu_usage:.1f}%)."
             )
 
-        if gpu_temperature >= 80:
+        if gpu_temperature is not None and gpu_temperature >= 80:
             diagnosis_factors.append(
                 f"GPU temperature is high ({gpu_temperature:.1f} °C)."
             )
@@ -1944,21 +2071,21 @@ def realtime_dashboard():
                     "Check applications using high CPU resources."
                 )
 
-            if cpu_temperature >= 80:
+            if cpu_temperature is not None and cpu_temperature >= 80:
 
                 diagnosis_recommendations.append(
                     f"CPU temperature is high ({cpu_temperature:.1f} °C). "
                     "Check CPU cooling and airflow."
                 )
 
-            if gpu_usage >= 80:
+            if gpu_usage is not None and gpu_usage >= 80:
 
                 diagnosis_recommendations.append(
                     f"GPU usage is high ({gpu_usage:.1f}%). "
                     "Check which applications are using the GPU."
                 )
 
-            if gpu_temperature >= 80:
+            if gpu_temperature is not None and gpu_temperature >= 80:
 
                 diagnosis_recommendations.append(
                     f"GPU temperature is high ({gpu_temperature:.1f} °C). "
@@ -2069,12 +2196,12 @@ def realtime_dashboard():
 
             st.metric(
                 "🎮 GPU Usage",
-                f"{gpu_usage:.1f}%"
+                f"{gpu_usage:.1f}%" if gpu_usage is not None else "N/A"
             )
 
             st.metric(
                 "🌡️ GPU Temperature",
-                f"{gpu_temperature:.1f} °C"
+                f"{gpu_temperature:.1f} °C" if gpu_temperature is not None else "N/A"
             )
 
 
@@ -2127,9 +2254,9 @@ def realtime_dashboard():
 
             "RAM Usage": f"{ram_usage:.1f}%",
 
-            "GPU Usage": f"{gpu_usage:.1f}%",
+            "GPU Usage": f"{gpu_usage:.1f}%" if gpu_usage is not None else "N/A",
 
-            "GPU Temperature": f"{gpu_temperature:.1f} °C",
+            "GPU Temperature": f"{gpu_temperature:.1f} °C" if gpu_temperature is not None else "N/A",
 
             "Disk Usage": f"{disk_usage:.1f}%",
 
@@ -2152,8 +2279,10 @@ def realtime_dashboard():
 # RUN DASHBOARD
 # ============================================================
 
-if page in ["🏠 Overview", "📊 Performance", "🤖 AI Analysis"]:
+if page in ["🏠 Overview", "🤖 AI Analysis"]:
     realtime_dashboard()
+elif page == "📊 Performance":
+    performance_dashboard()
 
 
 # ============================================================
