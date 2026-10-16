@@ -1296,40 +1296,434 @@ st.sidebar.caption(
 # SECURITY PAGE
 # ============================================================
 
+
+# ============================================================
+# SECURITY PAGE - ON-DEMAND, LIGHTWEIGHT CHECKS
+# ============================================================
+
 if page == "🛡️ Security":
 
     st.title("🛡️ Security Monitoring")
 
     st.info(
-        "Security monitoring module for basic system protection "
-        "and security status information."
+        "Check Microsoft Defender and Windows Firewall status. "
+        "No virus scan is started automatically."
     )
 
+    if st.button("🔍 Check Antivirus & Firewall"):
+
+        ps_script = r"""
+$ErrorActionPreference = 'Continue'
+
+$defender = $null
+$defenderError = $null
+$firewall = @()
+$firewallError = $null
+
+try {
+    $mp = Get-MpComputerStatus -ErrorAction Stop
+
+    $signature = $null
+    $quickScan = $null
+
+    if ($mp.AntivirusSignatureLastUpdated) {
+        $signature = $mp.AntivirusSignatureLastUpdated.ToString(
+            'yyyy-MM-dd HH:mm:ss'
+        )
+    }
+
+    if ($mp.QuickScanStartTime) {
+        $quickScan = $mp.QuickScanStartTime.ToString(
+            'yyyy-MM-dd HH:mm:ss'
+        )
+    }
+
+    $defender = [PSCustomObject]@{
+        AntivirusEnabled = $mp.AntivirusEnabled
+        RealTimeProtectionEnabled = $mp.RealTimeProtectionEnabled
+        SignatureLastUpdated = $signature
+        QuickScanStartTime = $quickScan
+    }
+}
+catch {
+    $defenderError = $_.Exception.Message
+}
+
+try {
+    $firewall = @(
+        Get-NetFirewallProfile -ErrorAction Stop |
+        Select-Object Name, Enabled
+    )
+}
+catch {
+    $firewallError = $_.Exception.Message
+}
+
+$result = [PSCustomObject]@{
+    Defender = $defender
+    DefenderError = $defenderError
+    FirewallProfiles = $firewall
+    FirewallError = $firewallError
+}
+
+ConvertTo-Json -InputObject $result -Depth 5 -Compress
+"""
+
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    ps_script
+                ],
+                capture_output=True,
+                text=True,
+                timeout=8
+            )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                st.session_state.security_check_result = {
+                    "error": (
+                        result.stderr.strip()
+                        or "Windows security status could not be read."
+                    )
+                }
+            else:
+                st.session_state.security_check_result = json.loads(
+                    result.stdout
+                )
+
+        except subprocess.TimeoutExpired:
+            st.session_state.security_check_result = {
+                "error": "Security check timed out. Please try again."
+            }
+
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            st.session_state.security_check_result = {
+                "error": f"Security check failed: {exc}"
+            }
+
+    security_data = st.session_state.get("security_check_result")
+
+    st.divider()
     st.subheader("🔐 Security Status")
 
-    col1, col2, col3 = st.columns(3)
+    if security_data is None:
+        st.info(
+            "Click the button above to check the current "
+            "Antivirus and Firewall status."
+        )
 
-    with col1:
-        st.success("🟢 System Monitoring Active")
+    elif security_data.get("error"):
+        st.error(security_data["error"])
 
-    with col2:
-        st.success("🟢 AI Risk Engine Active")
+    else:
+        defender = security_data.get("Defender")
 
-    with col3:
-        st.success("🟢 Real-Time Monitoring Active")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("### 🦠 Microsoft Defender")
+
+            if isinstance(defender, dict):
+                antivirus_on = (
+                    defender.get("AntivirusEnabled") is True
+                )
+                realtime_on = (
+                    defender.get("RealTimeProtectionEnabled") is True
+                )
+
+                if antivirus_on and realtime_on:
+                    st.success(
+                        "Defender reports Antivirus and "
+                        "Real-Time Protection enabled."
+                    )
+                else:
+                    st.warning(
+                        "Defender reports Antivirus or Real-Time "
+                        "Protection disabled/not active. "
+                        "Check Windows Security, especially if "
+                        "another antivirus is installed."
+                    )
+
+                st.write(
+                    "**Antivirus enabled:**",
+                    "Yes" if antivirus_on else "No / Not active"
+                )
+
+                st.write(
+                    "**Real-time protection:**",
+                    "Enabled" if realtime_on else "Disabled / Not active"
+                )
+
+                st.write(
+                    "**Signature last updated:**",
+                    defender.get("SignatureLastUpdated") or "Unavailable"
+                )
+
+                st.write(
+                    "**Last quick scan start:**",
+                    defender.get("QuickScanStartTime") or "Unavailable"
+                )
+
+            else:
+                st.warning(
+                    "Microsoft Defender status could not be verified."
+                )
+                if security_data.get("DefenderError"):
+                    st.caption(security_data["DefenderError"])
+
+        
+        with col2:
+            st.markdown("### 🧱 Windows Firewall")
+
+            firewall_profiles = security_data.get(
+                "FirewallProfiles"
+            ) or []
+
+            if isinstance(firewall_profiles, dict):
+                firewall_profiles = [firewall_profiles]
+
+            if firewall_profiles:
+                profile_statuses = []
+
+                for profile in firewall_profiles:
+                    name = profile.get("Name", "Unknown")
+                    raw_enabled = profile.get("Enabled")
+
+                    if isinstance(raw_enabled, bool):
+                        enabled = raw_enabled
+                    elif isinstance(raw_enabled, (int, float)):
+                        enabled = raw_enabled == 1
+                    elif isinstance(raw_enabled, str):
+                        enabled = raw_enabled.strip().lower() in ("true", "1", "yes")
+                    else:
+                        enabled = False
+
+                    profile_statuses.append(enabled)
+
+                    st.write(
+                        f"**{name}:** "
+                        f"{'Enabled' if enabled else 'Disabled / Unknown'}"
+                    )
+
+                if all(profile_statuses):
+                    st.success(
+                        "All reported Firewall profiles are enabled."
+                    )
+                else:
+                    st.warning(
+                        "One or more Firewall profiles are disabled "
+                        "or could not be verified."
+                    )
+
+            else:
+                st.warning(
+                    "Firewall status could not be verified."
+                )
+                if security_data.get("FirewallError"):
+                    st.caption(security_data["FirewallError"])
+
+        st.caption(
+            "These checks read Windows-reported status only. "
+            "They do not perform a virus scan or guarantee that "
+            "the PC is free from threats."
+        )
+
+
+
+    # ============================================================
+    # WINDOWS UPDATE STATUS - ON-DEMAND CHECK
+    # ============================================================
 
     st.divider()
 
-    st.subheader("🛡️ Security Overview")
+    # Store the latest Windows Update result for the summary
+    if "update_data" not in st.session_state:
+        st.session_state.update_data = None
 
-    st.write(
-        "This module provides a dedicated area for monitoring "
-        "system health and security-related conditions."
-    )
+    st.subheader("🪟 Windows Update Status")
 
-    st.warning(
-        "⚠️ Advanced security checks can be added in the next phase."
-    )
+    if st.button("🔄 Check Windows Update Status"):
+        try:
+            update_script = r"""
+            $service = Get-Service -Name wuauserv -ErrorAction Stop
+            $session = New-Object -ComObject Microsoft.Update.Session
+            $searcher = $session.CreateUpdateSearcher()
+            $result = $searcher.Search("IsInstalled=0 and IsHidden=0")
+
+            [PSCustomObject]@{
+                ServiceStatus = $service.Status.ToString()
+                PendingUpdates = $result.Updates.Count
+            } | ConvertTo-Json -Compress
+            """
+
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    update_script
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                update_data = json.loads(result.stdout.strip())
+                st.session_state.update_data = update_data
+
+                st.write(
+                    "Windows Update Service:",
+                    update_data["ServiceStatus"]
+                )
+
+                pending = int(update_data["PendingUpdates"])
+
+                if pending == 0:
+                    st.success(
+                        "Search mein koi pending update nahi mila."
+                    )
+                else:
+                    st.warning(
+                        f"{pending} pending update(s) detected."
+                    )
+
+                st.caption(
+                    "This is a status check only. Updates will not be downloaded or installed."
+                )
+
+            else:
+                st.error(
+                    "The Windows Update status check time out. Please try again later."
+                )
+                if result.stderr.strip():
+                    st.code(result.stderr.strip()[:1200])
+
+        except subprocess.TimeoutExpired:
+            st.warning(
+                "Windows Update check mein zyada time laga. Baad mein retry karo."
+            )
+
+        except Exception as e:
+            st.error(f"Windows Update check failed: {e}")
+
+
+
+    # ============================================================
+    # PC SECURITY SUMMARY - USE EXISTING CHECK RESULTS ONLY
+    # ============================================================
+
+    st.divider()
+    st.markdown("### 📋 PC Security Summary")
+
+    if security_data is None:
+        st.info(
+            "Run the Antivirus & Firewall check first "
+            "to generate the security summary."
+        )
+
+    elif security_data.get("error"):
+        st.warning(
+            "Security summary is unavailable because "
+            "the security check did not complete."
+        )
+
+    else:
+        defender = security_data.get("Defender") or {}
+        firewall_profiles = (
+            security_data.get("FirewallProfiles") or []
+        )
+
+        if isinstance(firewall_profiles, dict):
+            firewall_profiles = [firewall_profiles]
+
+        # Microsoft Defender status
+        antivirus_on = (
+            isinstance(defender, dict)
+            and defender.get("AntivirusEnabled") is True
+        )
+        realtime_on = (
+            isinstance(defender, dict)
+            and defender.get("RealTimeProtectionEnabled") is True
+        )
+
+        # Firewall status
+        firewall_enabled = []
+
+        for profile in firewall_profiles:
+            raw_enabled = profile.get("Enabled")
+
+            if isinstance(raw_enabled, bool):
+                enabled = raw_enabled
+            elif isinstance(raw_enabled, (int, float)):
+                enabled = raw_enabled == 1
+            elif isinstance(raw_enabled, str):
+                enabled = raw_enabled.strip().lower() in (
+                    "true", "1", "yes"
+                )
+            else:
+                enabled = False
+
+            firewall_enabled.append(enabled)
+
+        firewall_ok = (
+            bool(firewall_enabled)
+            and all(firewall_enabled)
+        )
+
+        # Display summary
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if antivirus_on and realtime_on:
+                st.success("🦠 Microsoft Defender: Enabled")
+            else:
+                st.warning(
+                    "🦠 Microsoft Defender: "
+                    "Disabled or not fully verified"
+                )
+
+        with col2:
+            if firewall_ok:
+                st.success("🧱 Windows Firewall: Enabled")
+            else:
+                st.warning(
+                    "🧱 Windows Firewall: "
+                    "Disabled or not fully verified"
+                )
+
+        st.caption(
+            "Summary uses the latest available Antivirus & Firewall "
+            "check results. It does not perform a new scan."
+        )
+
+        
+        # Windows Update status in the security summary
+        update_data = st.session_state.get("update_data")
+
+        if update_data:
+            service_status = update_data.get("ServiceStatus", "Unknown")
+            pending_updates = update_data.get("PendingUpdates")
+
+            st.write("🪟 **Windows Update Service:**", service_status)
+
+            if service_status == "Running" and pending_updates == 0:
+                st.success("No pending updates were found in the latest check.")
+            elif service_status == "Running" and pending_updates is not None:
+                st.warning(
+                    f"Windows Update: {pending_updates} pending update(s) "
+                    "in the latest check."
+                )
+            else:
+                st.info("Windows Update status needs verification.")
+        else:
+            st.info("Run the Windows Update check to include it in this summary.")
 
 
 
